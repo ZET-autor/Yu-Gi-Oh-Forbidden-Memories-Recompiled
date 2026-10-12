@@ -1084,7 +1084,8 @@ static int prepare(int page_x, int page_y, int depth, int clut_x, int clut_y, in
     if (!index) return 0;
     head = index - 1;
     if (entries[head].clut_entries) {
-        clut = TextureDump_Tags[(clut_y & (SOFT_GPU_HEIGHT - 1)) * SOFT_GPU_WIDTH + (clut_x & (SOFT_GPU_WIDTH - 1))];
+        clut = clut_y >= SOFT_GPU_HEIGHT ? SoftGpu_ExtTag(clut_x, clut_y)   /* an extra palette row (soft_gpu.h) */
+                                         : TextureDump_Tags[(clut_y & (SOFT_GPU_HEIGHT - 1)) * SOFT_GPU_WIDTH + (clut_x & (SOFT_GPU_WIDTH - 1))];
     }
     for (i = head; i < entry_count && (i == head || sibling(&entries[head], &entries[i])); i++) {
         Entry *entry = &entries[i];

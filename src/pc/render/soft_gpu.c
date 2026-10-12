@@ -240,10 +240,53 @@ void SoftGpu_SetRecorder(const SoftGpuRecorder *wanted)
     }
 }
 
+/* The extra palette rows (soft_gpu.h). */
+static uint16_t ext_rows[SOFT_GPU_EXT_ROWS * SOFT_GPU_WIDTH];
+static unsigned ext_version;
+
+void SoftGpu_ExtPalette(int row, int x, int count, const uint16_t *colors)
+{
+    int i;
+    if (row < 0 || row >= SOFT_GPU_EXT_ROWS || !colors) return;
+    for (i = 0; i < count && x + i < SOFT_GPU_WIDTH; i++)
+        if (x + i >= 0) ext_rows[row * SOFT_GPU_WIDTH + x + i] = colors[i];
+    ext_version++;
+}
+
+static uint32_t ext_tags[SOFT_GPU_EXT_ROWS * SOFT_GPU_WIDTH];
+
+void SoftGpu_ExtTags(int row, int x, int count, const uint32_t *tags)
+{
+    int i;
+    if (row < 0 || row >= SOFT_GPU_EXT_ROWS || !tags) return;
+    for (i = 0; i < count && x + i < SOFT_GPU_WIDTH; i++)
+        if (x + i >= 0) ext_tags[row * SOFT_GPU_WIDTH + x + i] = tags[i];
+}
+
+uint32_t SoftGpu_ExtTag(int x, int y)
+{
+    if (y < SOFT_GPU_HEIGHT || y >= SOFT_GPU_HEIGHT + SOFT_GPU_EXT_ROWS) return 0;
+    return ext_tags[(y - SOFT_GPU_HEIGHT) * SOFT_GPU_WIDTH + (x & (SOFT_GPU_WIDTH - 1))];
+}
+
+const uint16_t *SoftGpu_ExtRows(unsigned *version)
+{
+    if (version) *version = ext_version;
+    return ext_rows;
+}
+
 /* The same word in whichever bank the current texture page names. */
 static inline __attribute__((always_inline)) uint16_t sample(int x, int y)
 {
     return texture_source[(y & (SOFT_GPU_HEIGHT - 1)) * SOFT_GPU_WIDTH + (x & (SOFT_GPU_WIDTH - 1))];
+}
+
+/* A palette word: rows 512 and up are the extra rows, the rest VRAM (or
+ * the bank) as ever. */
+static inline __attribute__((always_inline)) uint16_t clut_word(int x, int y)
+{
+    if (y >= SOFT_GPU_HEIGHT) return ext_rows[((y - SOFT_GPU_HEIGHT) & (SOFT_GPU_EXT_ROWS - 1)) * SOFT_GPU_WIDTH + (x & (SOFT_GPU_WIDTH - 1))];
+    return sample(x, y);
 }
 
 /* Seed transferred words in a scaled companion. Primitive rendering then
@@ -561,10 +604,10 @@ static inline __attribute__((always_inline)) uint16_t texel(int u, int v)
     y = gpu.page_y + v;
     if (gpu.depth == 0) {
         x = gpu.page_x + u / 4;
-        word = sample(gpu.clut_x + ((sample(x, y) >> ((u & 3) * 4)) & 0xf), gpu.clut_y);
+        word = clut_word(gpu.clut_x + ((sample(x, y) >> ((u & 3) * 4)) & 0xf), gpu.clut_y);
     } else if (gpu.depth == 1) {
         x = gpu.page_x + u / 2;
-        word = sample(gpu.clut_x + ((sample(x, y) >> ((u & 1) * 8)) & 0xff), gpu.clut_y);
+        word = clut_word(gpu.clut_x + ((sample(x, y) >> ((u & 1) * 8)) & 0xff), gpu.clut_y);
     } else {
         word = sample(gpu.page_x + u, y);
     }
@@ -1064,7 +1107,7 @@ static size_t polygon(const uint32_t *words, size_t count)
             v[i].v = (word >> 8) & 0xff;
             if (i == 0) {
                 gpu.clut_x = ((word >> 16) & 0x3f) * 16;
-                gpu.clut_y = (word >> 22) & 0x1ff;
+                gpu.clut_y = (word >> 22) & 0x3ff;
             } else if (i == 1) {
                 set_page(word >> 16);
             } else if (i == 2) {
@@ -1183,7 +1226,7 @@ static size_t rectangle(const uint32_t *words, size_t count)
         base.u = words[at] & 0xff;
         base.v = (words[at] >> 8) & 0xff;
         gpu.clut_x = ((words[at] >> 16) & 0x3f) * 16;
-        gpu.clut_y = (words[at] >> 22) & 0x1ff;
+        gpu.clut_y = (words[at] >> 22) & 0x3ff;
         at++;
     }
     w = h = sizes[kind];

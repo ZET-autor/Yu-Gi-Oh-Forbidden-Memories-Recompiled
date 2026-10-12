@@ -664,6 +664,7 @@ static void expand(unsigned char *out, uint16_t color)
 void TextureDump_Primitive(const uint16_t *source, int page_x, int page_y, int depth, int clut_x, int clut_y,
                            int u0, int v0, int u1, int v1)
 {
+    if (clut_y >= SOFT_GPU_HEIGHT) return;   /* an extra palette row (soft_gpu.h): not the disc's */
     int w, h, u, v, entries = depth == 0 ? 16 : depth == 1 ? 256 : 0;
     uint16_t *indices, palette[256];
     unsigned char *rows, header[8];

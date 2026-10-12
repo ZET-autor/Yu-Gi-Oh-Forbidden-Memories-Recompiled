@@ -10,6 +10,27 @@
 #define SOFT_GPU_HEIGHT 512
 
 void SoftGpu_Reset(void);
+
+/* Extra palette rows: CLUT rows 512 and up, past the console's VRAM, that
+ * only palettes are read from. A primitive's CLUT word has room for them:
+ * its row is 9 bits on the console (0-511) and the 16th bit, which retail
+ * never sets, makes it 10, so a sprite whose CLUT row is 512 + n (GsSPRITE
+ * cy, a display object's field_42, getClut) draws through extra row n. The
+ * console's VRAM, what the game reads back and save states keep, is not
+ * touched. Mods use them for palettes the game has no room for (frame
+ * colors). SoftGpu_ExtPalette writes count words at x of extra row `row`
+ * (0 to SOFT_GPU_EXT_ROWS - 1); SoftGpu_ExtRows gives all of them and a
+ * number that changes when they do. */
+#define SOFT_GPU_EXT_ROWS 64
+void SoftGpu_ExtPalette(int row, int x, int count, const uint16_t *colors);
+const uint16_t *SoftGpu_ExtRows(unsigned *version);
+/* The texture pack's tags for an extra row's words (texture_dump.h: a
+ * word's disc offset + 1, 0 for none): a pack finds its image for a
+ * palette by its first word's tag, so a mod gives its palette the tag of
+ * the disc palette (or an offset of its own the pack's manifest names) the
+ * HD image is for. SoftGpu_ExtTag reads one, by CLUT x and row (512 up). */
+void SoftGpu_ExtTags(int row, int x, int count, const uint32_t *tags);
+uint32_t SoftGpu_ExtTag(int x, int y);
 /* Execute complete GP0 commands. A command cut off by the end of the buffer
  * is dropped; unknown opcodes consume one word. Returns words consumed. */
 size_t SoftGpu_Gp0(const uint32_t *words, size_t count);

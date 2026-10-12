@@ -289,7 +289,9 @@ static void capture_touch(int x, int y, int w, int h);
 static GLuint glyphs_texture;
 static int glyphs_side;
 static unsigned glyphs_generation = ~0u;
-static GLint u_glyphs;
+static GLint u_glyphs, u_ext_rows;
+static GLuint ext_texture;
+static unsigned ext_uploaded = ~0u;
 
 static const char *vertex_source =
 #ifdef __APPLE__
@@ -435,6 +437,7 @@ static const char *fragment_source =
     "#version 130\n"
 #endif
     "uniform usampler2D vram;\n"
+    "uniform usampler2D ext_rows;\n" /* the extra palette rows (soft_gpu.h): CLUT rows 512 up */
     "uniform usampler2DArray banks;\n"
     "uniform sampler2D scratch;\n"
     "uniform usampler2D entry_map;\n"
@@ -471,17 +474,21 @@ static const char *fragment_source =
     "    return texelFetch(vram, ivec2(x & 1023, y & 511), 0).r;\n"
     "}\n"
     /* Texel u,v (0 to 255) of the primitive's page through the window. */
+    "uint clut_at(int x, int y) {\n"
+    "    if (y >= 512) return texelFetch(ext_rows, ivec2(x & 1023, (y - 512) & 63), 0).r;\n"
+    "    return word_at(x, y);\n"
+    "}\n"
     "uint texel_word(int u, int v) {\n"
     "    u = ((u & ~window.x) | window.z) & 255;\n"
     "    v = ((v & ~window.y) | window.w) & 255;\n"
     "    int y = page.y + v;\n"
     "    if (mode.x == 0) {\n"
     "        uint w = word_at(page.x + u / 4, y);\n"
-    "        return word_at(page.z + int((w >> uint((u & 3) * 4)) & 15u), page.w);\n"
+    "        return clut_at(page.z + int((w >> uint((u & 3) * 4)) & 15u), page.w);\n"
     "    }\n"
     "    if (mode.x == 1) {\n"
     "        uint w = word_at(page.x + u / 2, y);\n"
-    "        return word_at(page.z + int((w >> uint((u & 1) * 8)) & 255u), page.w);\n"
+    "        return clut_at(page.z + int((w >> uint((u & 1) * 8)) & 255u), page.w);\n"
     "    }\n"
     "    return word_at(page.x + u, y);\n"
     "}\n"
@@ -769,6 +776,7 @@ static int make_program(int xbr)
     u_place_map = gl_GetUniformLocation(program, "place_map");
     u_pack = gl_GetUniformLocation(program, "pack");
     u_glyphs = gl_GetUniformLocation(program, "glyphs");
+    u_ext_rows = gl_GetUniformLocation(program, "ext_rows");
     u_pack_entry = gl_GetUniformLocation(program, "pack_entry");
     u_pack_size = gl_GetUniformLocation(program, "pack_size");
     u_bank_sprite = gl_GetUniformLocation(program, "bank_sprite");
@@ -1283,7 +1291,7 @@ static size_t polygon(const uint32_t *words, size_t count)
             v[i].v = (word >> 8) & 0xff;
             if (i == 0) {
                 state.clut_x = ((word >> 16) & 0x3f) * 16;
-                state.clut_y = (word >> 22) & 0x1ff;
+                state.clut_y = (word >> 22) & 0x3ff;
             } else if (i == 1) {
                 set_page(word >> 16);
             } else if (i == 2) {
@@ -1429,7 +1437,7 @@ static size_t rectangle(const uint32_t *words, size_t count)
         base.u = words[at] & 0xff;
         base.v = (words[at] >> 8) & 0xff;
         state.clut_x = ((words[at] >> 16) & 0x3f) * 16;
-        state.clut_y = (words[at] >> 22) & 0x1ff;
+        state.clut_y = (words[at] >> 22) & 0x3ff;
         at++;
     }
     w = h = sizes[kind];
@@ -2536,6 +2544,25 @@ int GlPicture_Replay(void)
     gl_ActiveTexture(GL_TEXTURE7);
     glBindTexture(GL_TEXTURE_2D, capture_texture);
     gl_ActiveTexture(GL_TEXTURE0);
+    {
+        /* The extra palette rows, on unit 8, sent again when they change. */
+        unsigned version;
+        const uint16_t *rows = SoftGpu_ExtRows(&version);
+        if (!ext_texture) {
+            ext_texture = make_texture(GL_R16UI, SOFT_GPU_WIDTH, SOFT_GPU_EXT_ROWS, GL_RED_INTEGER, GL_UNSIGNED_SHORT);
+            ext_uploaded = ~version;
+        }
+        gl_ActiveTexture(GL_TEXTURE8);
+        glBindTexture(GL_TEXTURE_2D, ext_texture);
+        if (version != ext_uploaded) {
+            glPixelStorei(GL_UNPACK_ALIGNMENT, 2);
+            glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, SOFT_GPU_WIDTH, SOFT_GPU_EXT_ROWS, GL_RED_INTEGER, GL_UNSIGNED_SHORT, rows);
+            glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+            ext_uploaded = version;
+        }
+        gl_ActiveTexture(GL_TEXTURE0);
+        gl_Uniform1i(u_ext_rows, 8);
+    }
     capture_uniform();
     gl_Uniform1i(u_tex_xbr, Settings_Get(SET_XBR));
     hd_text = HdText_Enabled();
@@ -2837,6 +2864,8 @@ static void delete_names(void)
     if (buffer) gl_DeleteBuffers(1, &buffer);
     if (vertex_array && glDeleteVertexArrays_) glDeleteVertexArrays_(1, &vertex_array);
     if (vram_fbo) gl_DeleteFramebuffers(1, &vram_fbo);
+    if (ext_texture) glDeleteTextures(1, &ext_texture);
+    ext_texture = 0;
     if (vram_scratch_fbo) gl_DeleteFramebuffers(1, &vram_scratch_fbo);
     if (vram_texture) glDeleteTextures(1, &vram_texture);
     if (vram_scratch) glDeleteTextures(1, &vram_scratch);
